@@ -13,11 +13,25 @@ interface Contact {
     type?: 'friend' | 'former_friend' | 'sns_only'
 }
 
+interface SnsOverviewStats {
+    totalPosts: number
+    totalFriends: number
+    earliestTime: number | null
+    latestTime: number | null
+}
+
 export default function SnsPage() {
     const [posts, setPosts] = useState<SnsPost[]>([])
     const [loading, setLoading] = useState(false)
     const [hasMore, setHasMore] = useState(true)
     const loadingRef = useRef(false)
+    const [overviewStats, setOverviewStats] = useState<SnsOverviewStats>({
+        totalPosts: 0,
+        totalFriends: 0,
+        earliestTime: null,
+        latestTime: null
+    })
+    const [overviewStatsLoading, setOverviewStatsLoading] = useState(false)
 
     // Filter states
     const [searchKeyword, setSearchKeyword] = useState('')
@@ -74,6 +88,58 @@ export default function SnsPage() {
             scrollAdjustmentRef.current = null;
         }
     }, [posts])
+
+    const formatDateOnly = (timestamp: number | null): string => {
+        if (!timestamp || timestamp <= 0) return '--'
+        const date = new Date(timestamp * 1000)
+        if (Number.isNaN(date.getTime())) return '--'
+        const year = date.getFullYear()
+        const month = String(date.getMonth() + 1).padStart(2, '0')
+        const day = String(date.getDate()).padStart(2, '0')
+        return `${year}-${month}-${day}`
+    }
+
+    const loadOverviewStats = useCallback(async () => {
+        setOverviewStatsLoading(true)
+        try {
+            const statsResult = await window.electronAPI.sns.getExportStats()
+            if (!statsResult.success || !statsResult.data) {
+                throw new Error(statsResult.error || '获取朋友圈统计失败')
+            }
+
+            const totalPosts = Math.max(0, Number(statsResult.data.totalPosts || 0))
+            const totalFriends = Math.max(0, Number(statsResult.data.totalFriends || 0))
+            let earliestTime: number | null = null
+            let latestTime: number | null = null
+
+            if (totalPosts > 0) {
+                const [latestResult, earliestResult] = await Promise.all([
+                    window.electronAPI.sns.getTimeline(1, 0),
+                    window.electronAPI.sns.getTimeline(1, Math.max(totalPosts - 1, 0))
+                ])
+                const latestTs = Number(latestResult.timeline?.[0]?.createTime || 0)
+                const earliestTs = Number(earliestResult.timeline?.[0]?.createTime || 0)
+
+                if (latestResult.success && Number.isFinite(latestTs) && latestTs > 0) {
+                    latestTime = Math.floor(latestTs)
+                }
+                if (earliestResult.success && Number.isFinite(earliestTs) && earliestTs > 0) {
+                    earliestTime = Math.floor(earliestTs)
+                }
+            }
+
+            setOverviewStats({
+                totalPosts,
+                totalFriends,
+                earliestTime,
+                latestTime
+            })
+        } catch (error) {
+            console.error('Failed to load SNS overview stats:', error)
+        } finally {
+            setOverviewStatsLoading(false)
+        }
+    }, [])
 
     const loadPosts = useCallback(async (options: { reset?: boolean, direction?: 'older' | 'newer' } = {}) => {
         const { reset = false, direction = 'older' } = options
@@ -244,7 +310,8 @@ export default function SnsPage() {
     // Initial Load & Listeners
     useEffect(() => {
         loadContacts()
-    }, [loadContacts])
+        loadOverviewStats()
+    }, [loadContacts, loadOverviewStats])
 
     useEffect(() => {
         const handleChange = () => {
@@ -252,11 +319,12 @@ export default function SnsPage() {
             setPosts([]); setHasMore(true); setHasNewer(false);
             setSelectedUsernames([]); setSearchKeyword(''); setJumpTargetDate(undefined);
             loadContacts();
+            loadOverviewStats();
             loadPosts({ reset: true });
         }
         window.addEventListener('wxid-changed', handleChange as EventListener)
         return () => window.removeEventListener('wxid-changed', handleChange as EventListener)
-    }, [loadContacts, loadPosts])
+    }, [loadContacts, loadOverviewStats, loadPosts])
 
     useEffect(() => {
         const timer = setTimeout(() => {
@@ -288,7 +356,12 @@ export default function SnsPage() {
             <div className="sns-main-viewport" onScroll={handleScroll} onWheel={handleWheel} ref={postsContainerRef}>
                 <div className="sns-feed-container">
                     <div className="feed-header">
-                        <h2>朋友圈</h2>
+                        <div className="feed-header-main">
+                            <h2>朋友圈</h2>
+                            <div className={`feed-stats-line ${overviewStatsLoading ? 'loading' : ''}`}>
+                                共 {overviewStats.totalPosts} 条 ｜ {formatDateOnly(overviewStats.earliestTime)} ~ {formatDateOnly(overviewStats.latestTime)} ｜ {overviewStats.totalFriends} 位好友
+                            </div>
+                        </div>
                         <div className="header-actions">
                             <button
                                 onClick={async () => {
@@ -325,6 +398,7 @@ export default function SnsPage() {
                                 onClick={() => {
                                     setRefreshSpin(true)
                                     loadPosts({ reset: true })
+                                    loadOverviewStats()
                                     setTimeout(() => setRefreshSpin(false), 800)
                                 }}
                                 disabled={loading || loadingNewer}
@@ -362,7 +436,10 @@ export default function SnsPage() {
                                     }
                                 }}
                                 onDebug={(p) => setDebugPost(p)}
-                                onDelete={(postId) => setPosts(prev => prev.filter(p => p.id !== postId))}
+                                onDelete={(postId) => {
+                                    setPosts(prev => prev.filter(p => p.id !== postId))
+                                    loadOverviewStats()
+                                }}
                             />
                         ))}
                     </div>
