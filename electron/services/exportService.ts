@@ -204,6 +204,41 @@ class ExportService {
     return info
   }
 
+  private resolveSessionFilePrefix(sessionId: string, contact?: any): string {
+    const normalizedSessionId = String(sessionId || '').trim()
+    if (!normalizedSessionId) return '私聊_'
+    if (normalizedSessionId.endsWith('@chatroom')) return '群聊_'
+    if (normalizedSessionId.startsWith('gh_')) return '公众号_'
+
+    const rawLocalType = contact?.local_type ?? contact?.localType ?? contact?.WCDB_CT_local_type
+    const localType = Number.parseInt(String(rawLocalType ?? ''), 10)
+    const quanPin = String(contact?.quan_pin ?? contact?.quanPin ?? contact?.WCDB_CT_quan_pin ?? '').trim()
+
+    if (Number.isFinite(localType) && localType === 0 && quanPin) {
+      return '曾经的好友_'
+    }
+
+    return '私聊_'
+  }
+
+  private async getSessionFilePrefix(sessionId: string): Promise<string> {
+    const normalizedSessionId = String(sessionId || '').trim()
+    if (!normalizedSessionId) return '私聊_'
+    if (normalizedSessionId.endsWith('@chatroom')) return '群聊_'
+    if (normalizedSessionId.startsWith('gh_')) return '公众号_'
+
+    try {
+      const contactResult = await wcdbService.getContact(normalizedSessionId)
+      if (contactResult.success && contactResult.contact) {
+        return this.resolveSessionFilePrefix(normalizedSessionId, contactResult.contact)
+      }
+    } catch {
+      // ignore and use default private prefix
+    }
+
+    return '私聊_'
+  }
+
   private async preloadContacts(
     usernames: Iterable<string>,
     cache: Map<string, { success: boolean; contact?: any; error?: string }>,
@@ -4794,6 +4829,7 @@ class ExportService {
         const baseName = sanitizeName(sessionInfo.displayName || sessionId) || sanitizeName(sessionId) || 'session'
         const suffix = sanitizeName(options.fileNameSuffix || '')
         const safeName = suffix ? `${baseName}_${suffix}` : baseName
+        const fileNameWithPrefix = `${await this.getSessionFilePrefix(sessionId)}${safeName}`
         const useSessionFolder = sessionLayout === 'per-session'
         const sessionDir = useSessionFolder ? path.join(outputDir, safeName) : outputDir
 
@@ -4807,7 +4843,7 @@ class ExportService {
         else if (options.format === 'txt') ext = '.txt'
         else if (options.format === 'weclone') ext = '.csv'
         else if (options.format === 'html') ext = '.html'
-        const outputPath = path.join(sessionDir, `${safeName}${ext}`)
+        const outputPath = path.join(sessionDir, `${fileNameWithPrefix}${ext}`)
 
         let result: { success: boolean; error?: string }
         if (options.format === 'json') {
