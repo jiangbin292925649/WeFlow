@@ -152,6 +152,9 @@ const CHAT_SESSION_LIST_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const CHAT_SESSION_PREVIEW_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const CHAT_SESSION_PREVIEW_LIMIT_PER_SESSION = 30
 const CHAT_SESSION_PREVIEW_MAX_SESSIONS = 18
+const CHAT_SESSION_WINDOW_CACHE_TTL_MS = 12 * 60 * 60 * 1000
+const CHAT_SESSION_WINDOW_CACHE_MAX_SESSIONS = 30
+const CHAT_SESSION_WINDOW_CACHE_MAX_MESSAGES = 300
 const GROUP_MEMBERS_PANEL_CACHE_TTL_MS = 10 * 60 * 1000
 
 function buildChatSessionListCacheKey(scope: string): string {
@@ -288,6 +291,16 @@ interface GroupMembersPanelCacheEntry {
   updatedAt: number
   members: GroupPanelMember[]
   includeMessageCounts: boolean
+}
+
+interface SessionWindowCacheEntry {
+  updatedAt: number
+  messages: Message[]
+  currentOffset: number
+  hasMoreMessages: boolean
+  hasMoreLater: boolean
+  jumpStartTime: number
+  jumpEndTime: number
 }
 
 interface LoadMessagesOptions {
@@ -544,6 +557,7 @@ function ChatPage(_props: ChatPageProps) {
   const hasInitializedGroupMembersRef = useRef(false)
   const chatCacheScopeRef = useRef('default')
   const previewCacheRef = useRef<Record<string, SessionPreviewCacheEntry>>({})
+  const sessionWindowCacheRef = useRef<Map<string, SessionWindowCacheEntry>>(new Map())
   const previewPersistTimerRef = useRef<number | null>(null)
   const sessionListPersistTimerRef = useRef<number | null>(null)
   const pendingExportRequestIdRef = useRef<string | null>(null)
@@ -748,6 +762,76 @@ function ChatPage(_props: ChatPageProps) {
       // ignore preview cache errors
     }
   }, [persistSessionPreviewCache, setMessages])
+
+  const saveSessionWindowCache = useCallback((sessionId: string, entry: Omit<SessionWindowCacheEntry, 'updatedAt'>) => {
+    const id = String(sessionId || '').trim()
+    if (!id || !Array.isArray(entry.messages) || entry.messages.length === 0) return
+
+    const trimmedMessages = entry.messages.length > CHAT_SESSION_WINDOW_CACHE_MAX_MESSAGES
+      ? entry.messages.slice(-CHAT_SESSION_WINDOW_CACHE_MAX_MESSAGES)
+      : entry.messages.slice()
+
+    const cache = sessionWindowCacheRef.current
+    cache.set(id, {
+      updatedAt: Date.now(),
+      ...entry,
+      messages: trimmedMessages,
+      currentOffset: trimmedMessages.length
+    })
+
+    if (cache.size <= CHAT_SESSION_WINDOW_CACHE_MAX_SESSIONS) return
+
+    const sortedByTime = [...cache.entries()]
+      .sort((a, b) => (a[1].updatedAt || 0) - (b[1].updatedAt || 0))
+
+    for (const [key] of sortedByTime) {
+      if (cache.size <= CHAT_SESSION_WINDOW_CACHE_MAX_SESSIONS) break
+      cache.delete(key)
+    }
+  }, [])
+
+  const restoreSessionWindowCache = useCallback((sessionId: string): boolean => {
+    const id = String(sessionId || '').trim()
+    if (!id) return false
+
+    const cache = sessionWindowCacheRef.current
+    const entry = cache.get(id)
+    if (!entry) return false
+    if (Date.now() - entry.updatedAt > CHAT_SESSION_WINDOW_CACHE_TTL_MS) {
+      cache.delete(id)
+      return false
+    }
+    if (!Array.isArray(entry.messages) || entry.messages.length === 0) {
+      cache.delete(id)
+      return false
+    }
+
+    // LRU: 命中后更新时间
+    cache.set(id, {
+      ...entry,
+      updatedAt: Date.now(),
+      messages: entry.messages.slice()
+    })
+
+    setMessages(entry.messages.slice())
+    setCurrentOffset(entry.messages.length)
+    setHasMoreMessages(entry.hasMoreMessages !== false)
+    setHasMoreLater(entry.hasMoreLater === true)
+    setJumpStartTime(entry.jumpStartTime || 0)
+    setJumpEndTime(entry.jumpEndTime || 0)
+    setNoMessageTable(false)
+    setHasInitialMessages(true)
+    return true
+  }, [
+    setMessages,
+    setHasMoreMessages,
+    setHasMoreLater,
+    setCurrentOffset,
+    setJumpStartTime,
+    setJumpEndTime,
+    setNoMessageTable,
+    setHasInitialMessages
+  ])
 
   const hydrateSessionListCache = useCallback((scope: string): boolean => {
     try {
@@ -1435,6 +1519,7 @@ function ChatPage(_props: ChatPageProps) {
     pendingSessionLoadRef.current = null
     initialLoadRequestedSessionRef.current = null
     sessionSwitchRequestSeqRef.current += 1
+    sessionWindowCacheRef.current.clear()
     setIsSessionSwitching(false)
     setSessionDetail(null)
     setIsRefreshingDetailStats(false)
@@ -2110,6 +2195,33 @@ function ChatPage(_props: ChatPageProps) {
     }
   }, [currentSessionId, isLoadingMore, isLoadingMessages, messages, getMessageKey, appendMessages, setHasMoreLater, setLoadingMore])
 
+  const refreshSessionIncrementally = useCallback(async (sessionId: string, switchRequestSeq?: number) => {
+    const currentMessages = useChatStore.getState().messages || []
+    const lastMsg = currentMessages[currentMessages.length - 1]
+    const minTime = lastMsg?.createTime || 0
+    if (!sessionId || minTime <= 0) return
+
+    try {
+      const result = await window.electronAPI.chat.getNewMessages(sessionId, minTime, 120) as {
+        success: boolean
+        messages?: Message[]
+        error?: string
+      }
+      if (switchRequestSeq && switchRequestSeq !== sessionSwitchRequestSeqRef.current) return
+      if (currentSessionRef.current !== sessionId) return
+      if (!result.success || !Array.isArray(result.messages) || result.messages.length === 0) return
+
+      const latestMessages = useChatStore.getState().messages || []
+      const existing = new Set(latestMessages.map(getMessageKey))
+      const newMessages = result.messages.filter((msg) => !existing.has(getMessageKey(msg)))
+      if (newMessages.length > 0) {
+        appendMessages(newMessages, false)
+      }
+    } catch (error) {
+      console.warn('[SessionCache] 增量刷新失败:', error)
+    }
+  }, [appendMessages, getMessageKey])
+
   // 选择会话
   const handleSelectSession = (session: ChatSession) => {
     // 点击折叠群入口，切换到折叠群视图
@@ -2120,21 +2232,31 @@ function ChatPage(_props: ChatPageProps) {
     if (session.username === currentSessionId) return
     const switchRequestSeq = sessionSwitchRequestSeqRef.current + 1
     sessionSwitchRequestSeqRef.current = switchRequestSeq
-    pendingSessionLoadRef.current = session.username
-    initialLoadRequestedSessionRef.current = session.username
-    setIsSessionSwitching(true)
+
     setCurrentSession(session.username, { preserveMessages: false })
-    void hydrateSessionPreview(session.username)
-    setCurrentOffset(0)
-    setJumpStartTime(0)
-    setJumpEndTime(0)
     setNoMessageTable(false)
-    void loadMessages(session.username, 0, 0, 0, false, {
-      preferLatestPath: true,
-      deferGroupSenderWarmup: true,
-      forceInitialLimit: 30,
-      switchRequestSeq
-    })
+
+    const restoredFromWindowCache = restoreSessionWindowCache(session.username)
+    if (restoredFromWindowCache) {
+      pendingSessionLoadRef.current = null
+      initialLoadRequestedSessionRef.current = null
+      setIsSessionSwitching(false)
+      void refreshSessionIncrementally(session.username, switchRequestSeq)
+    } else {
+      pendingSessionLoadRef.current = session.username
+      initialLoadRequestedSessionRef.current = session.username
+      setIsSessionSwitching(true)
+      void hydrateSessionPreview(session.username)
+      setCurrentOffset(0)
+      setJumpStartTime(0)
+      setJumpEndTime(0)
+      void loadMessages(session.username, 0, 0, 0, false, {
+        preferLatestPath: true,
+        deferGroupSenderWarmup: true,
+        forceInitialLimit: 30,
+        switchRequestSeq
+      })
+    }
     // 切换会话后回到正常聊天窗口：收起详情侧栏，详情需手动再次展开
     setShowDetailPanel(false)
     setShowGroupMembersPanel(false)
@@ -2446,7 +2568,25 @@ function ChatPage(_props: ChatPageProps) {
   useEffect(() => {
     if (!currentSessionId || !Array.isArray(messages) || messages.length === 0) return
     persistSessionPreviewCache(currentSessionId, messages)
-  }, [currentSessionId, messages, persistSessionPreviewCache])
+    saveSessionWindowCache(currentSessionId, {
+      messages,
+      currentOffset,
+      hasMoreMessages,
+      hasMoreLater,
+      jumpStartTime,
+      jumpEndTime
+    })
+  }, [
+    currentSessionId,
+    messages,
+    currentOffset,
+    hasMoreMessages,
+    hasMoreLater,
+    jumpStartTime,
+    jumpEndTime,
+    persistSessionPreviewCache,
+    saveSessionWindowCache
+  ])
 
   useEffect(() => {
     if (!Array.isArray(sessions) || sessions.length === 0) return
