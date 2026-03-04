@@ -4954,24 +4954,10 @@ class ChatService {
         }
       }
 
-      const [contactResult, avatarResult] = await Promise.allSettled([
-        wcdbService.getContact(normalizedSessionId),
-        avatarUrl ? Promise.resolve({ success: true, map: { [normalizedSessionId]: avatarUrl } }) : wcdbService.getAvatarUrls([normalizedSessionId])
-      ])
-
-      if (contactResult.status === 'fulfilled' && contactResult.value.success && contactResult.value.contact) {
-        remark = contactResult.value.contact.remark || undefined
-        nickName = contactResult.value.contact.nickName || undefined
-        alias = contactResult.value.contact.alias || undefined
-        displayName = remark || nickName || alias || displayName
-      }
-
-      if (avatarResult.status === 'fulfilled' && avatarResult.value.success && avatarResult.value.map) {
-        const avatarCandidate = avatarResult.value.map[normalizedSessionId]
-        if (this.isValidAvatarUrl(avatarCandidate)) {
-          avatarUrl = avatarCandidate
-        }
-      }
+      const contactPromise = wcdbService.getContact(normalizedSessionId)
+      const avatarPromise = avatarUrl
+        ? Promise.resolve({ success: true, map: { [normalizedSessionId]: avatarUrl } })
+        : wcdbService.getAvatarUrls([normalizedSessionId])
 
       let messageCount: number | undefined
       const cachedCount = this.sessionMessageCountCache.get(normalizedSessionId)
@@ -4988,10 +4974,38 @@ class ChatService {
         }
       }
 
+      const messageCountPromise = Number.isFinite(messageCount)
+        ? Promise.resolve<{ success: boolean; count?: number }>({
+          success: true,
+          count: Math.max(0, Math.floor(messageCount as number))
+        })
+        : wcdbService.getMessageCount(normalizedSessionId)
+
+      const [contactResult, avatarResult, messageCountResult] = await Promise.allSettled([
+        contactPromise,
+        avatarPromise,
+        messageCountPromise
+      ])
+
+      if (contactResult.status === 'fulfilled' && contactResult.value.success && contactResult.value.contact) {
+        remark = contactResult.value.contact.remark || undefined
+        nickName = contactResult.value.contact.nickName || undefined
+        alias = contactResult.value.contact.alias || undefined
+        displayName = remark || nickName || alias || displayName
+      }
+
+      if (avatarResult.status === 'fulfilled' && avatarResult.value.success && avatarResult.value.map) {
+        const avatarCandidate = avatarResult.value.map[normalizedSessionId]
+        if (this.isValidAvatarUrl(avatarCandidate)) {
+          avatarUrl = avatarCandidate
+        }
+      }
+
       if (!Number.isFinite(messageCount)) {
-        const countResult = await wcdbService.getMessageCount(normalizedSessionId)
-        messageCount = countResult.success && Number.isFinite(countResult.count)
-          ? Math.max(0, Math.floor(countResult.count || 0))
+        messageCount = messageCountResult.status === 'fulfilled' &&
+          messageCountResult.value.success &&
+          Number.isFinite(messageCountResult.value.count)
+          ? Math.max(0, Math.floor(messageCountResult.value.count || 0))
           : 0
         this.sessionMessageCountCache.set(normalizedSessionId, {
           count: messageCount,

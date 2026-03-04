@@ -2875,9 +2875,11 @@ function ExportPage() {
     const requestSeq = ++detailRequestSeqRef.current
     const mappedSession = sessionRowByUsername.get(normalizedSessionId)
     const mappedContact = contactByUsername.get(normalizedSessionId)
+    const countedCount = normalizeMessageCount(sessionMessageCounts[normalizedSessionId])
     const hintedCount = typeof mappedSession?.messageCountHint === 'number' && Number.isFinite(mappedSession.messageCountHint) && mappedSession.messageCountHint >= 0
       ? Math.floor(mappedSession.messageCountHint)
       : undefined
+    const initialMessageCount = countedCount ?? hintedCount
 
     setCopiedDetailField(null)
     setIsRefreshingSessionDetailStats(false)
@@ -2891,7 +2893,7 @@ function ExportPage() {
         nickName: sameSession ? prev?.nickName : mappedContact?.nickname,
         alias: sameSession ? prev?.alias : undefined,
         avatarUrl: mappedSession?.avatarUrl || mappedContact?.avatarUrl || (sameSession ? prev?.avatarUrl : undefined),
-        messageCount: hintedCount ?? (sameSession ? prev.messageCount : Number.NaN),
+        messageCount: initialMessageCount ?? (sameSession ? prev.messageCount : Number.NaN),
         voiceMessages: sameSession ? prev?.voiceMessages : undefined,
         imageMessages: sameSession ? prev?.imageMessages : undefined,
         videoMessages: sameSession ? prev?.videoMessages : undefined,
@@ -3035,7 +3037,7 @@ function ExportPage() {
         setIsLoadingSessionDetailExtra(false)
       }
     }
-  }, [applySessionDetailStats, contactByUsername, sessionRowByUsername])
+  }, [applySessionDetailStats, contactByUsername, sessionMessageCounts, sessionRowByUsername])
 
   const loadSessionRelationStats = useCallback(async () => {
     const normalizedSessionId = String(sessionDetail?.wxid || '').trim()
