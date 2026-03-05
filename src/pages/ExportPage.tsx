@@ -3858,7 +3858,7 @@ function ExportPage() {
       loaded,
       statusLabel: getLoadDetailStatusLabel(loaded, total, hasStarted),
       startedAt: earliestStart,
-      finishedAt: latestFinish
+      finishedAt: loaded >= total ? latestFinish : undefined
     }
   }, [getLoadDetailStatusLabel, sessionLoadTraceMap])
 
