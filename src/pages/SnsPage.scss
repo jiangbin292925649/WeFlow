@@ -1063,10 +1063,25 @@
     }
 
     /* Date Widget */
+    .date-widget-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+    }
+
+    .date-widget .widget-header {
+        margin-bottom: 0;
+        flex-shrink: 0;
+        min-width: 72px;
+    }
+
     .jump-calendar-anchor {
         position: relative;
         display: flex;
         align-items: center;
+        flex: 1;
+        min-width: 0;
         isolation: isolate;
         z-index: 20;
 

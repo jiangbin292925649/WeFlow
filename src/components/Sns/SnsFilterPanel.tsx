@@ -123,38 +123,40 @@ export const SnsFilterPanel: React.FC<SnsFilterPanelProps> = ({
 
                 {/* Date Widget */}
                 <div className="filter-widget date-widget">
-                    <div className="widget-header">
-                        <Calendar size={14} />
-                        <span>时间跳转</span>
-                    </div>
-                    <div className="jump-calendar-anchor" ref={jumpCalendarWrapRef}>
-                        <button
-                            className={`date-picker-trigger ${jumpTargetDate ? 'active' : ''}`}
-                            onClick={() => setShowJumpPopover(prev => !prev)}
-                        >
-                            <span className="date-text">
-                                {jumpTargetDate
-                                    ? jumpTargetDate.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
-                                    : '选择日期...'}
-                            </span>
-                            {jumpTargetDate && (
-                                <div
-                                    className="clear-date-btn"
-                                    onClick={(e) => {
-                                        e.stopPropagation()
-                                        setJumpTargetDate(undefined)
-                                    }}
-                                >
-                                    <X size={12} />
-                                </div>
-                            )}
-                        </button>
-                        <JumpToDatePopover
-                            isOpen={showJumpPopover}
-                            currentDate={jumpTargetDate || new Date()}
-                            onClose={() => setShowJumpPopover(false)}
-                            onSelect={(date) => setJumpTargetDate(date)}
-                        />
+                    <div className="date-widget-row">
+                        <div className="widget-header">
+                            <Calendar size={14} />
+                            <span>时间跳转</span>
+                        </div>
+                        <div className="jump-calendar-anchor" ref={jumpCalendarWrapRef}>
+                            <button
+                                className={`date-picker-trigger ${jumpTargetDate ? 'active' : ''}`}
+                                onClick={() => setShowJumpPopover(prev => !prev)}
+                            >
+                                <span className="date-text">
+                                    {jumpTargetDate
+                                        ? jumpTargetDate.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
+                                        : '选择日期...'}
+                                </span>
+                                {jumpTargetDate && (
+                                    <div
+                                        className="clear-date-btn"
+                                        onClick={(e) => {
+                                            e.stopPropagation()
+                                            setJumpTargetDate(undefined)
+                                        }}
+                                    >
+                                        <X size={12} />
+                                    </div>
+                                )}
+                            </button>
+                            <JumpToDatePopover
+                                isOpen={showJumpPopover}
+                                currentDate={jumpTargetDate || new Date()}
+                                onClose={() => setShowJumpPopover(false)}
+                                onSelect={(date) => setJumpTargetDate(date)}
+                            />
+                        </div>
                     </div>
                 </div>
 
