@@ -2157,12 +2157,22 @@ class ExportService {
           imageMd5,
           imageDatName
         })
-        if (!thumbResult.success || !thumbResult.localPath) {
-          console.log(`[Export] 缩略图也获取失败 (localId=${msg.localId}): error=${thumbResult.error || '未知'} → 将显示 [图片] 占位符`)
-          return null
+        if (thumbResult.success && thumbResult.localPath) {
+          console.log(`[Export] 使用缩略图替代 (localId=${msg.localId}): ${thumbResult.localPath}`)
+          result.localPath = thumbResult.localPath
+        } else {
+          console.log(`[Export] 缩略图也获取失败 (localId=${msg.localId}): error=${thumbResult.error || '未知'}`)
+          // 最后尝试：直接从 imageStore 获取缓存的缩略图 data URL
+          const { imageStore } = await import('../main')
+          const cachedThumb = imageStore?.getCachedImage(sessionId, imageMd5, imageDatName)
+          if (cachedThumb) {
+            console.log(`[Export] 从 imageStore 获取到缓存缩略图 (localId=${msg.localId})`)
+            result.localPath = cachedThumb
+          } else {
+            console.log(`[Export] 所有方式均失败 → 将显示 [图片] 占位符`)
+            return null
+          }
         }
-        console.log(`[Export] 使用缩略图替代 (localId=${msg.localId}): ${thumbResult.localPath}`)
-        result.localPath = thumbResult.localPath
       }
 
       // 为每条消息生成稳定且唯一的文件名前缀，避免跨日期/消息发生同名覆盖
