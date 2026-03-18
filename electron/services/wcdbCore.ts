@@ -551,6 +551,7 @@ export class WcdbCore {
 
       const dllDir = dirname(dllPath)
       const isMac = process.platform === 'darwin'
+      const isLinux = process.platform === 'linux'
       
       // 预加载依赖库
       if (isMac) {
@@ -564,6 +565,8 @@ export class WcdbCore {
             this.writeLog(`预加载 libWCDB.dylib 失败: ${String(e)}`)
           }
         }
+      } else if (isLinux) {
+        // 如果有libWCDB.so的话， 没有就算了
       } else {
         const wcdbCorePath = join(dllDir, 'WCDB.dll')
         if (existsSync(wcdbCorePath)) {
